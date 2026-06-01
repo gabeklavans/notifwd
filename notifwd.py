@@ -11,7 +11,8 @@ from datetime import datetime
 import plistlib
 import sched, time
 import requests
-from sys import argv, maxsize, stdout
+from pathlib import Path
+from sys import argv, stdout
 import argparse
 from os import environ
 from itertools import cycle
@@ -21,7 +22,7 @@ from itertools import cycle
 class Notification:
     
     @staticmethod
-    def setup(argv):
+    def setup(_):
         # Parse the command-line arguments.
         parser = argparse.ArgumentParser(
             description="notifwd v%s - macOS notification forwarder" % __version__,
@@ -59,13 +60,8 @@ class Notification:
  |_| \_|\___/ \__|_|_|     \_/\_/ \__,_|
 
 notifwd by Jordan Mann. Starting up... """, end="")
-        # Get the system temp directory macOS is caching to.
-        tmp_path = subprocess.run(["getconf", "DARWIN_USER_DIR"], stdout=subprocess.PIPE).stdout
         # Locate the database; start SQLite.
-        db_path = tmp_path.decode("utf-8").rstrip() + "com.apple.NotificationCenter/db2/db"
-        db_path_fails = subprocess.run(["stat", db_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
-        if (db_path_fails):
-            db_path = tmp_path.decode("utf-8").rstrip() + "com.apple.notificationcenter/db2/db"
+        db_path = Path.home() / "Library" / "Group Containers" / "group.com.apple.usernoted" / "db2" / "db"
         Notification.connection = sqlite3.connect(db_path)
         Notification.cursor = Notification.connection.cursor()
         # Set the most recent notification ID to the ID of the last-displayed notification.
@@ -86,7 +82,7 @@ notifwd by Jordan Mann. Starting up... """, end="")
         spinner = cycle(['*','-', '/', '|', '\\','-','*'])
         def scheduled_update(s):
             if not Notification.SILENT:
-                    for i in range(0,7):
+                    for _ in range(0,7):
                         time.sleep(0.1)
                         stdout.write(next(spinner))
                         stdout.flush()
