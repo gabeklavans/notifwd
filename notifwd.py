@@ -116,7 +116,11 @@ notifwd by Jordan Mann. Starting up... """, end="")
     def get_notification_data(n):
         #return Notification.cursor.execute("SELECT *, NTH_VALUE(rec_id,%d) OVER (ORDER BY rec_id DESC) FROM record LIMIT 1" % (n + 1)).fetchone()
         # I know there is a better way to do this, but I've spent an hour with my limited SQLite knowledge and it isn't enough.
-        return Notification.cursor.execute("SELECT * FROM (SELECT * FROM record ORDER BY rec_id DESC LIMIT %d) ORDER BY rec_id LIMIT 1" % (n + 1)).fetchone()
+        try:
+            return Notification.cursor.execute("SELECT * FROM (SELECT * FROM record ORDER BY rec_id DESC LIMIT %d) ORDER BY rec_id LIMIT 1" % (n + 1)).fetchone()
+        except Exception as e:
+            print(f"failed to get notif data: {e}")
+            return None
     
     # Get an application name like "Messages" from an identifier like "com.apple.Messages"
     # that comes with the notification.
