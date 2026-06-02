@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # notifwd for macOS
-# Copyright Jordan Mann,
+# Original author: Jordan Mann,
 # with credit to contributors on GitHub:
 # https://github.com/jrmann100/notifwd/pulls
+# https://github.com/gabeklavans/notifwd/pulls
 
 __version__ = "0.6"
 
@@ -16,10 +17,12 @@ from datetime import UTC, datetime
 from itertools import cycle
 from os import environ
 from pathlib import Path
-from sys import argv, exit, stdout
+from sys import exit, stdout
 from typing import Any
 
+import apprise
 import requests
+from apprise.apprise import Apprise
 
 
 class Notification:
@@ -62,17 +65,14 @@ class Notification:
             (int(self.ago/60)), self.app, self.title.strip()))
 
     # Send a notification to the Prowl API.
-    def send(self, silent: bool):
+    def send(self, silent: bool, apobj: Apprise):
         if not silent:
             print("\nSending notification from", self)
 
-        # r = requests.post("https://api.prowlapp.com/publicapi/add",
-        #                   data={"apikey": Notification.API_KEY, "application": self.app,
-        #                         "event": self.title, "description": self.text})
-
-        # if r.status_code != 200:
-        #     print("Received unexpected status code", r.status_code, r.reason, "response:\n", r.text)
-        print(f"{self.app=}, {self.title=}, {self.text=}")
+        try:
+            apobj.notify(title=f"{self.title} ({self.app})", body=self.text)
+        except Exception as e:
+            print(f"Failed to send notification via apprise: {e}")
 
 
 def parse_notification(raw_plist):
@@ -115,7 +115,7 @@ def get_notification_data(n, cursor: sqlite3.Cursor):
         return None
 
 
-def check(last_id: Any | None, last_date: Any | None, cursor: sqlite3.Cursor, silent: bool) -> tuple[Any | None, Any | None]:
+def check(last_id: Any | None, last_date: Any | None, cursor: sqlite3.Cursor, silent: bool, apobj: Apprise) -> tuple[Any | None, Any | None]:
     """
     Collect recent notifications.
     """
@@ -130,20 +130,20 @@ def check(last_id: Any | None, last_date: Any | None, cursor: sqlite3.Cursor, si
     # Either delivered_date or request_date will be filled in. Don't yet want to peek into what those mean.
     newest_date = (sql_data[6] if sql_data[6] is not None else sql_data[4])
     while sql_data[0] != last_id and (sql_data[6] if sql_data[6] != None else sql_data[4]) >= last_date:
-        parse_notification(sql_data[3]).send(silent)
+        parse_notification(sql_data[3]).send(silent, apobj)
         n += 1
         sql_data = get_notification_data(n, cursor)
 
     return newest_id, newest_date
 
 
-def setup() -> tuple[bool, int, sqlite3.Connection, sqlite3.Cursor, Any | None, Any | None]:
+def setup() -> tuple[bool, int, sqlite3.Connection, sqlite3.Cursor, Any | None, Any | None, Apprise]:
     parser = argparse.ArgumentParser(
         description="notifwd v%s - macOS notification forwarder" % __version__,
         prog="notifwd")
-    parser.add_argument("--api-key", "-k",
-                        help="Prowl API key",
-                        default=environ.get("PROWL_API_KEY"))
+    parser.add_argument("--notif-url", "-k",
+                        help="Apprise Notification URL",
+                        default=environ.get("NOTIF_URL"))
     parser.add_argument("--frequency", "-f", type=int,
                         help="Frequency, in seconds, to check for new notifications.",
                         default=60)
@@ -157,8 +157,8 @@ def setup() -> tuple[bool, int, sqlite3.Connection, sqlite3.Cursor, Any | None, 
     if args.version:
         print("notifwd v%s" % __version__)
         raise SystemExit()
-    if args.api_key is None:
-        parser.error("no API key specified. Is $PROWL_API_KEY defined?")
+    if args.notif_url is None:
+        parser.error("no notification URL is specified. Is $NOTIF_URL defined?")
     if args.frequency <= 0:
         parser.error("frequency must be a positive integer.")
 
@@ -191,11 +191,14 @@ Starting up... """, end="")
     if not args.silent:
         print("setup done.")
 
-    return args.silent, args.frequency, connection, cursor, last_id, last_date
+    apobj = apprise.Apprise()
+    apobj.add(args.notif_url)
+
+    return args.silent, args.frequency, connection, cursor, last_id, last_date, apobj
 
 
 def main():
-    silent, freq, connection, cursor, last_id, last_date = setup()
+    silent, freq, connection, cursor, last_id, last_date, apobj = setup()
 
     s = sched.scheduler(time.time, time.sleep)
     # https://stackoverflow.com/a/22616059/9068081
@@ -209,7 +212,7 @@ def main():
                 stdout.flush()
                 stdout.write('\b')
 
-        last_id, last_date = check(last_id, last_date, cursor, silent)
+        last_id, last_date = check(last_id, last_date, cursor, silent, apobj)
         # Schedule to run periodically.
         s.enter(freq - 0.7, 1, scheduled_update, (s, last_id, last_date, cursor))
 
