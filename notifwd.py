@@ -18,11 +18,16 @@ from itertools import cycle
 from os import environ
 from pathlib import Path
 from sys import exit, stdout
-from typing import Any
+from typing import Any, NamedTuple
 
 import apprise
-import requests
 from apprise.apprise import Apprise
+
+
+class SendFilter(NamedTuple):
+    title: str | None
+    app: str | None
+    body: str | None
 
 
 class Notification:
@@ -46,7 +51,6 @@ class Notification:
                                identifier.strip(), "-attr", "kMDItemDisplayName"],
                               stdout=subprocess.PIPE).stdout.decode("utf-8").split(" = ")[-1].strip()
 
-    # Inititialize nonstatic Notification attributes.
     def __init__(self):
         self.identifier = ""
         self.app = ""
@@ -59,15 +63,27 @@ class Notification:
         self.date = 0.0
         self.xml = ""
 
-    # Display notification info, for logging.
     def __str__(self):
         return ("%d minutes ago from %s: \"%s\"" % (
             (int(self.ago/60)), self.app, self.title.strip()))
 
-    # Send a notification to the Prowl API.
-    def send(self, silent: bool, apobj: Apprise):
+    def send(self, silent: bool, apobj: Apprise, send_filter: SendFilter | None):
         if not silent:
-            print("\nSending notification from", self)
+            print("\nTrying to send notification from", self)
+
+        if send_filter:
+            if send_filter.title and send_filter.title.lower() not in self.title.lower():
+                if not silent:
+                    print("Not sending notification: title string does not match configured filter.")
+                return
+            if send_filter.app and send_filter.app.lower() not in self.app.lower():
+                if not silent:
+                    print("Not sending notification: app string does not match configured filter.")
+                return
+            if send_filter.body and send_filter.body.lower() not in self.body.lower():
+                if not silent:
+                    print("Not sending notification: body string does not match configured filter.")
+                return
 
         title = self.title
         if self.app:
@@ -118,7 +134,7 @@ def get_notification_data(n, cursor: sqlite3.Cursor):
         return None
 
 
-def check(last_id: Any | None, last_date: Any | None, cursor: sqlite3.Cursor, silent: bool, apobj: Apprise) -> tuple[Any | None, Any | None]:
+def check(last_id: Any | None, last_date: Any | None, cursor: sqlite3.Cursor, silent: bool, apobj: Apprise, send_filter: SendFilter | None) -> tuple[Any | None, Any | None]:
     """
     Collect recent notifications.
     """
@@ -133,14 +149,14 @@ def check(last_id: Any | None, last_date: Any | None, cursor: sqlite3.Cursor, si
     # Either delivered_date or request_date will be filled in. Don't yet want to peek into what those mean.
     newest_date = (sql_data[6] if sql_data[6] is not None else sql_data[4])
     while sql_data[0] != last_id and (sql_data[6] if sql_data[6] != None else sql_data[4]) >= last_date:
-        parse_notification(sql_data[3]).send(silent, apobj)
+        parse_notification(sql_data[3]).send(silent, apobj, send_filter)
         n += 1
         sql_data = get_notification_data(n, cursor)
 
     return newest_id, newest_date
 
 
-def setup() -> tuple[bool, int, sqlite3.Connection, sqlite3.Cursor, Any | None, Any | None, Apprise]:
+def setup() -> tuple[bool, int, sqlite3.Connection, sqlite3.Cursor, Any | None, Any | None, Apprise, SendFilter | None]:
     parser = argparse.ArgumentParser(
         description="notifwd v%s - macOS notification forwarder" % __version__,
         prog="notifwd")
@@ -156,7 +172,14 @@ def setup() -> tuple[bool, int, sqlite3.Connection, sqlite3.Cursor, Any | None, 
                         help="Don't display the splash screen or verbose logging.", action="store_true")
     parser.add_argument("--test", "-t",
                         help="Display a test notification on startup.", action="store_true")
+    parser.add_argument("--filter-title", type=str,
+                        help="Only send notifications that contain this string in the title (case-insensitive).")
+    parser.add_argument("--filter-app", type=str,
+                        help="Only send notifications that contain this string in the app (case-insensitive).")
+    parser.add_argument("--filter-body", type=str,
+                        help="Only send notifications that contain this string in the body (case-insensitive).")
     args = parser.parse_args()
+
     if args.version:
         print("notifwd v%s" % __version__)
         raise SystemExit()
@@ -197,11 +220,15 @@ Starting up... """, end="")
     apobj = apprise.Apprise()
     apobj.add(args.notif_url)
 
-    return args.silent, args.frequency, connection, cursor, last_id, last_date, apobj
+    send_filter = None
+    if args.filter_title or args.filter_app or args.filter_body:
+        send_filter = SendFilter(args.filter_title, args.filter_app, args.filter_body)
+
+    return args.silent, args.frequency, connection, cursor, last_id, last_date, apobj, send_filter
 
 
 def main():
-    silent, freq, connection, cursor, last_id, last_date, apobj = setup()
+    silent, freq, connection, cursor, last_id, last_date, apobj, send_filter = setup()
 
     s = sched.scheduler(time.time, time.sleep)
     # https://stackoverflow.com/a/22616059/9068081
@@ -215,7 +242,7 @@ def main():
                 stdout.flush()
                 stdout.write('\b')
 
-        last_id, last_date = check(last_id, last_date, cursor, silent, apobj)
+        last_id, last_date = check(last_id, last_date, cursor, silent, apobj, send_filter)
         # Schedule to run periodically.
         s.enter(freq - 0.7, 1, scheduled_update, (s, last_id, last_date, cursor))
 
