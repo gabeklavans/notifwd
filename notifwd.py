@@ -69,8 +69,11 @@ class Notification:
         if not silent:
             print("\nSending notification from", self)
 
+        title = self.title
+        if self.app:
+            title += f" ({self.app})"
         try:
-            apobj.notify(title=f"{self.title} ({self.app})", body=self.text)
+            apobj.notify(title=title, body=self.text)
         except Exception as e:
             print(f"Failed to send notification via apprise: {e}")
 
