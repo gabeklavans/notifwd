@@ -151,7 +151,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "apprise" },
-    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -161,10 +160,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "apprise", specifier = ">=1.11.0" },
-    { name = "requests", specifier = ">=2.34.2" },
-]
+requires-dist = [{ name = "apprise", specifier = ">=1.11.0" }]
 
 [package.metadata.requires-dev]
 dev = [

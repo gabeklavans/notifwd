@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "apprise>=1.11.0",
-    "requests>=2.34.2",
 ]
 
 [dependency-groups]
